@@ -1,28 +1,91 @@
-const fetch = require('node-fetch')
+const Player = require('../models/player');
+const axios = require('axios');
+const cheerio = require('cheerio');
+const { data } = require('cheerio/lib/api/attributes');
+const path = require("path");
+const config = require('../config/config');
+const player = require('../models/player');
 
 async function doStuff(){
-    console.log("start timeout = " + new Date())
-    const URLs = ["https://jsonplaceholder.typicode.com/todos/1", "https://jsonplaceholder.typicode.com/todos/2", "https://jsonplaceholder.typicode.com/todos/3"];
-
-    for(url of URLs){
-        await new Promise(resolve => {
-            console.log("start promise")
-            setTimeout(resolve, 1000)
-        }).then(() => console.log("end promise"))
-        console.log("exec: " + url + "at " + new Date());
-       await getRequest(url);
+    console.log("start main method = " + new Date())
+    const squads = config.squads;
+    for(squad of squads){
+        await timeout(1000);
+        console.log("exec: " + squad.name + " at: " + new Date());
+        const playersRetrieved = await getPlayersFromSquad(squad);
+        for(toSave of playersRetrieved){
+          await savePlayerOnDb(toSave);
+        }
     }
-   
-     
-
-    console.log("end timeout = " + new Date())
+    console.log("end main method = " + new Date())
 }
 
-async function getRequest(url){
-   await fetch(url)
-    .then(response => response.json())
-    .then(json => console.log(json))
+async function getPlayersFromSquad(squadIn){
+    let players = [];
+    const url = squadIn.url;
+    const squadId = path.basename(url)
+    console.log("url called: " + url)
+    await axios(url)
+    .then(response => {
+        const returnedPlayers = buildPlayersFromResponse(response, squadId);
+        returnedPlayers.forEach((retPlayer) => players.push(retPlayer));
+    })
     .catch(err => console.log(err));
+    return players;
+}
+
+async function savePlayerOnDb(toSave){
+    await Player.findOneAndUpdate({_id: toSave._id}, toSave, {upsert:true})
+          .then(result => {
+            if(result === null ){
+              console.log("insert new player: " + player)
+            }else{
+              console.log("update player: " + result);
+            }
+          })
+          .catch(err => console.log(err))
+}
+
+function timeout(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function buildPlayersFromResponse(response, squadId){
+  const players = []
+  const $ = cheerio.load(response.data)
+  const playersTable = $('.items > tbody > tr');
+      const squad = $('h1 > span').text();
+      const league = $('.hauptpunkt > a').text().trim();
+      
+      playersTable.each(function () {
+        const number = $(this).find('.rn_nummer').text();
+        const marketValue = $(this).find('.rechts').text();
+        const roleDetailed = $(this).find('.posrela > table > tbody > tr:eq(1)').text();
+        const role = $(this).find('.rueckennummer').attr('title')
+        const playerName = $(this).find('.hide').text();
+        const nationalitys = $(this).find('.zentriert > img');
+        const nationality = [];
+        nationalitys.each(function() {
+          nationality.push($(this).attr('title'))
+        })
+        const id = $(this).find('.spielprofil_tooltip:eq(0)').attr('id');              
+
+        const player = new Player({
+          _id: id,
+          name: playerName,
+          squad: squad,
+          role: role,
+          roleDetailed: roleDetailed,
+          league: league,
+          squad_id: squadId,
+          number: number,
+          nationality: nationality,
+          marketValue: marketValue
+      })
+      players.push(player);
+      });
+  console.log("exit from squad " + squad + " with players n: " + players.length)
+  return players;
 }
 
 module.exports = { doStuff };
